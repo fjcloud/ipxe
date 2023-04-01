@@ -424,14 +424,14 @@ struct net_device {
 	/** Driver private data */
 	void *priv;
 
-	/** Network device configurations (variable length) */
-	struct net_device_configuration configs[0];
-
 	/** Static routes from DHCP option 121 */
 	uint8_t * static_routes;
 
 	/** DHCP option 121 length */
 	uint8_t static_routes_len;
+
+        /** Network device configurations (variable length) */
+        struct net_device_configuration configs[0];
 };
 
 /** Network device is open */
