@@ -46,7 +46,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <ipxe/dhcp.h>
 #include <ipxe/dhcpopts.h>
 #include <ipxe/dhcppkt.h>
-#include <ipxe/dhcp_arch.h>
+#include <ipxe/dhcparch.h>
 #include <ipxe/features.h>
 #include <config/dhcp.h>
 
@@ -445,23 +445,32 @@ static void dhcp_discovery_rx ( struct dhcp_session *dhcp,
 }
 
 /**
+ * Defer DHCP discovery
+ *
+ * @v dhcp		DHCP session
+ */
+static void dhcp_defer ( struct dhcp_session *dhcp ) {
+
+	/* Do nothing if we have reached the deferral limit */
+	if ( dhcp->count > DHCP_DISC_MAX_DEFERRALS )
+		return;
+
+	/* Return to discovery state */
+	DBGC ( dhcp, "DHCP %p deferring discovery\n", dhcp );
+	dhcp_set_state ( dhcp, &dhcp_state_discover );
+
+	/* Delay first DHCPDISCOVER */
+	start_timer_fixed ( &dhcp->timer,
+			    ( DHCP_DISC_START_TIMEOUT_SEC * TICKS_PER_SEC ) );
+}
+
+/**
  * Handle timer expiry during DHCP discovery
  *
  * @v dhcp		DHCP session
  */
 static void dhcp_discovery_expired ( struct dhcp_session *dhcp ) {
 	unsigned long elapsed = ( currticks() - dhcp->start );
-
-	/* If link is blocked, defer DHCP discovery (and reset timeout) */
-	if ( netdev_link_blocked ( dhcp->netdev ) &&
-	     ( dhcp->count <= DHCP_DISC_MAX_DEFERRALS ) ) {
-		DBGC ( dhcp, "DHCP %p deferring discovery\n", dhcp );
-		dhcp->start = currticks();
-		start_timer_fixed ( &dhcp->timer,
-				    ( DHCP_DISC_START_TIMEOUT_SEC *
-				      TICKS_PER_SEC ) );
-		return;
-	}
 
 	/* Give up waiting for ProxyDHCP before we reach the failure point */
 	if ( dhcp->offer.s_addr &&
@@ -470,8 +479,12 @@ static void dhcp_discovery_expired ( struct dhcp_session *dhcp ) {
 		return;
 	}
 
-	/* Otherwise, retransmit current packet */
+	/* Retransmit current packet */
 	dhcp_tx ( dhcp );
+
+	/* If link is blocked, defer DHCP discovery timeout */
+	if ( netdev_link_blocked ( dhcp->netdev ) )
+	     dhcp_defer ( dhcp );
 }
 
 /** DHCP discovery state operations */
@@ -555,12 +568,22 @@ static void dhcp_request_rx ( struct dhcp_session *dhcp,
 		DBGC ( dhcp, " for %s", inet_ntoa ( ip ) );
 	DBGC ( dhcp, "\n" );
 
-	/* Filter out unacceptable responses */
+	/* Filter out invalid port */
 	if ( peer->sin_port != htons ( BOOTPS_PORT ) )
 		return;
-	if ( msgtype /* BOOTP */ && ( msgtype != DHCPACK ) )
-		return;
+
+	/* Filter out non-selected servers */
 	if ( server_id.s_addr != dhcp->server.s_addr )
+		return;
+
+	/* Handle DHCPNAK */
+	if ( msgtype == DHCPNAK ) {
+		dhcp_defer ( dhcp );
+		return;
+	}
+
+	/* Filter out unacceptable responses */
+	if ( msgtype /* BOOTP */ && ( msgtype != DHCPACK ) )
 		return;
 	if ( ip.s_addr != dhcp->offer.s_addr )
 		return;
@@ -599,6 +622,12 @@ static void dhcp_request_rx ( struct dhcp_session *dhcp,
 		dhcp_finished ( dhcp, rc );
 		return;
 	}
+
+	/* Unregister any existing ProxyDHCP or PXEBS settings */
+	if ( ( settings = find_settings ( PROXYDHCP_SETTINGS_NAME ) ) != NULL )
+		unregister_settings ( settings );
+	if ( ( settings = find_settings ( PXEBS_SETTINGS_NAME ) ) != NULL )
+		unregister_settings ( settings );
 
 	/* Perform ProxyDHCP if applicable */
 	if ( dhcp->proxy_offer /* Have ProxyDHCP offer */ &&

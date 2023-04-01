@@ -93,7 +93,7 @@ int parse_integer ( char *text, unsigned int *value ) {
 
 	/* Parse integer */
 	*value = strtoul ( text, &endp, 0 );
-	if ( *endp ) {
+	if ( *endp || ( ! *text ) ) {
 		printf ( "\"%s\": invalid integer value\n", text );
 		return -EINVAL_INTEGER;
 	}
@@ -302,7 +302,7 @@ int parse_autovivified_setting ( char *text, struct named_setting *setting ) {
 }
 
 /**
- * Parse form parameter list name
+ * Parse request parameter list name
  *
  * @v text		Text
  * @ret params		Parameter list
